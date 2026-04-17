@@ -1,0 +1,7 @@
+youtube-transcript-api>=1.0.0
+yt-dlp>=2024.1.0
+openai>=1.40.0
+chromadb>=0.5.0
+streamlit>=1.28.0
+python-dotenv>=1.0.0
+pytest>=8.0.0
