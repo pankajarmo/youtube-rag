@@ -6,12 +6,21 @@ from urllib.parse import urlparse, urlunparse
 
 from yt_dlp import YoutubeDL
 
+from src.transcripts import is_youtube_video_id
+
+# Paths that should end with /videos so yt-dlp returns watch-page IDs, not tabs/UC rows.
+_VIDEOS_TAB_PATTERNS = (
+    re.compile(r"/@[\w.-]+", re.IGNORECASE),
+    re.compile(r"/channel/UC[\w-]+", re.IGNORECASE),
+    re.compile(r"/user/[\w.-]+", re.IGNORECASE),
+)
+
 
 def normalize_listing_url(url: str) -> str:
     """
-    Bare youtube.com/@handle links resolve to the channel home tab in yt-dlp, which
-    yields channel metadata rows (UC… ids), not watch-page video ids. Append /videos
-    when the path is only /@handle so listing returns real uploads.
+    Channel home URLs (/@handle, /channel/UC…) resolve to tab metadata in yt-dlp,
+    yielding channel IDs instead of video IDs. Append /videos when the path is only
+    the channel root so listing returns real uploads.
     """
     u = url.strip()
     parsed = urlparse(u)
@@ -19,18 +28,21 @@ def normalize_listing_url(url: str) -> str:
     if host not in ("www.youtube.com", "youtube.com", "m.youtube.com"):
         return u
     path = (parsed.path or "/").rstrip("/") or "/"
-    if re.fullmatch(r"/@[\w.-]+", path, re.IGNORECASE):
-        new_path = path + "/videos"
-        return urlunparse(
-            (
-                parsed.scheme or "https",
-                parsed.netloc,
-                new_path,
-                parsed.params,
-                parsed.query,
-                parsed.fragment,
+    if path.endswith("/videos") or path.endswith("/shorts") or path.endswith("/streams"):
+        return u
+    for pattern in _VIDEOS_TAB_PATTERNS:
+        if pattern.fullmatch(path):
+            new_path = path + "/videos"
+            return urlunparse(
+                (
+                    parsed.scheme or "https",
+                    parsed.netloc,
+                    new_path,
+                    parsed.params,
+                    parsed.query,
+                    parsed.fragment,
+                )
             )
-        )
     return u
 
 
@@ -65,6 +77,8 @@ def get_channel_video_entries(
         if not vid or not isinstance(vid, str):
             continue
         if vid.startswith("http"):
+            continue
+        if not is_youtube_video_id(vid):
             continue
         title = entry.get("title") or entry.get("fulltitle")
         entries.append({"id": vid, "title": title if isinstance(title, str) else None})

@@ -15,8 +15,9 @@ from src.store import (
     get_collection,
     get_or_create_collection,
 )
-from src.transcripts import get_transcript_text
-from src.youtube_channel import get_channel_video_entries
+from src.config import TRANSCRIPT_THROTTLE_SECONDS, YOUTUBE_COOKIES_PATH
+from src.transcripts import build_transcript_api, fetch_transcript, is_youtube_video_id
+from src.youtube_channel import get_channel_video_entries, normalize_listing_url
 
 
 def normalize_channel_url(url: str) -> str:
@@ -38,7 +39,7 @@ def index_channel(
     *,
     replace: bool = False,
     on_progress: ProgressFn | None = None,
-    throttle_seconds: float = 0.15,
+    throttle_seconds: float | None = None,
 ) -> dict[str, Any]:
     """
     Fetch transcripts, chunk, embed, and store in a Chroma collection dedicated
@@ -53,6 +54,28 @@ def index_channel(
     client = OpenAI(api_key=require_openai_key())
 
     entries = get_channel_video_entries(url, playlist_max=max_videos)
+    if not entries:
+        return {
+            "collection_name": name,
+            "channel_url": url,
+            "videos_listed": 0,
+            "videos_indexed": 0,
+            "videos_skipped_no_transcript": 0,
+            "videos_skipped_invalid_id": 0,
+            "videos_skipped_ip_blocked": 0,
+            "chunks_written": 0,
+            "error": (
+                "No videos listed. Use a channel URL like "
+                "https://www.youtube.com/@handle/videos (or /@handle — we append /videos)."
+            ),
+        }
+
+    delay = (
+        throttle_seconds
+        if throttle_seconds is not None
+        else TRANSCRIPT_THROTTLE_SECONDS
+    )
+    transcript_api = build_transcript_api(cookies_path=YOUTUBE_COOKIES_PATH)
 
     def prog(payload: dict[str, Any]) -> None:
         if on_progress:
@@ -62,21 +85,45 @@ def index_channel(
 
     indexed_videos = 0
     skipped_no_transcript = 0
+    skipped_invalid_id = 0
+    skipped_ip_blocked = 0
     total_chunks = 0
 
     for idx, entry in enumerate(entries):
         video_id = entry["id"]
         title = entry.get("title") or ""
-        transcript = get_transcript_text(video_id)
-        if not transcript:
-            skipped_no_transcript += 1
+        if not is_youtube_video_id(video_id):
+            skipped_invalid_id += 1
             prog(
                 {
                     "stage": "video",
                     "current": idx + 1,
                     "total": len(entries),
                     "video_id": video_id,
-                    "message": "No transcript; skipped",
+                    "message": "Not a video ID; skipped",
+                }
+            )
+            continue
+
+        result = fetch_transcript(video_id, api=transcript_api)
+        transcript = result.text
+        if not transcript:
+            if result.reason == "ip_blocked":
+                skipped_ip_blocked += 1
+                msg = "YouTube IP block; skipped (retry later or set YOUTUBE_COOKIES_PATH)"
+            elif result.reason == "invalid_video_id":
+                skipped_invalid_id += 1
+                msg = "Not a video ID; skipped"
+            else:
+                skipped_no_transcript += 1
+                msg = f"No transcript ({result.reason or 'unknown'}); skipped"
+            prog(
+                {
+                    "stage": "video",
+                    "current": idx + 1,
+                    "total": len(entries),
+                    "video_id": video_id,
+                    "message": msg,
                 }
             )
             continue
@@ -116,17 +163,26 @@ def index_channel(
                 "message": f"Indexed {len(chunks)} chunks",
             }
         )
-        if throttle_seconds > 0:
-            time.sleep(throttle_seconds)
+        if delay > 0:
+            time.sleep(delay)
 
-    return {
+    stats: dict[str, Any] = {
         "collection_name": name,
         "channel_url": url,
+        "listing_url": normalize_listing_url(url),
         "videos_listed": len(entries),
         "videos_indexed": indexed_videos,
         "videos_skipped_no_transcript": skipped_no_transcript,
+        "videos_skipped_invalid_id": skipped_invalid_id,
+        "videos_skipped_ip_blocked": skipped_ip_blocked,
         "chunks_written": total_chunks,
     }
+    if skipped_ip_blocked and indexed_videos == 0:
+        stats["error"] = (
+            "YouTube blocked transcript requests from this IP. Wait and re-index, "
+            "or set YOUTUBE_COOKIES_PATH to a cookies.txt export in .env."
+        )
+    return stats
 
 
 def query_channel(

@@ -28,7 +28,8 @@ with st.sidebar:
     st.subheader("How it works")
     st.markdown(
         """
-        1. Paste a **channel** or **playlist** URL supported by yt-dlp.
+        1. Paste a **channel** (`@handle` or `/channel/UC…`) or **playlist** URL.
+           We append `/videos` for channel home links so real video IDs are listed.
         2. Click **Index channel** (uses transcripts + OpenAI embeddings).
         3. Ask a question; answers use **retrieved transcript chunks** only.
         """
@@ -38,7 +39,7 @@ with st.sidebar:
 
 channel_url = st.text_input(
     "Channel or playlist URL",
-    placeholder="https://www.youtube.com/@channelname/videos",
+    placeholder="https://www.youtube.com/@MrBeast",
     value=st.session_state.last_channel_url or "",
 )
 max_videos = st.number_input("Max videos to scan", min_value=1, max_value=500, value=100)
@@ -83,11 +84,27 @@ if index_clicked and channel_url.strip():
         st.session_state.active_collection_name = stats["collection_name"]
         st.session_state.last_index_stats = stats
         progress.progress(1.0, text="Done")
-        st.success(
+        parts = [
             f"Indexed **{stats['videos_indexed']}** videos "
-            f"({stats['chunks_written']} chunks). "
-            f"Skipped (no transcript): **{stats['videos_skipped_no_transcript']}**."
-        )
+            f"({stats['chunks_written']} chunks)."
+        ]
+        if stats.get("videos_skipped_no_transcript"):
+            parts.append(
+                f"No transcript: **{stats['videos_skipped_no_transcript']}**."
+            )
+        if stats.get("videos_skipped_invalid_id"):
+            parts.append(
+                f"Invalid/listing ID (use /@channel or /channel/UC…/videos): "
+                f"**{stats['videos_skipped_invalid_id']}**."
+            )
+        if stats.get("videos_skipped_ip_blocked"):
+            parts.append(
+                f"YouTube IP block: **{stats['videos_skipped_ip_blocked']}** "
+                "(wait and re-index, or set `YOUTUBE_COOKIES_PATH` in `.env`)."
+            )
+        st.success(" ".join(parts))
+        if stats.get("error"):
+            st.warning(stats["error"])
     except Exception as e:
         progress.progress(0.0, text="Failed")
         st.error(str(e))

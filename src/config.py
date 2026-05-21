@@ -13,6 +13,12 @@ OPENAI_EMBEDDING_MODEL: str = os.getenv(
 OPENAI_CHAT_MODEL: str = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 # Conservative char cap for embedding input
 MAX_EMBEDDING_INPUT_CHARS: int = int(os.getenv("MAX_EMBEDDING_INPUT_CHARS", "8000"))
+# Optional: Netscape cookies.txt export for youtube-transcript-api (helps avoid IP blocks)
+YOUTUBE_COOKIES_PATH: str | None = os.getenv("YOUTUBE_COOKIES_PATH") or None
+# Delay between transcript fetches during indexing (seconds)
+TRANSCRIPT_THROTTLE_SECONDS: float = float(
+    os.getenv("TRANSCRIPT_THROTTLE_SECONDS", "0.5")
+)
 
 
 def require_openai_key() -> str:
